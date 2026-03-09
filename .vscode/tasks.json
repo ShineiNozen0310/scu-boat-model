@@ -2,19 +2,42 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "build main.c",
+      "label": "check firmware app",
       "type": "shell",
-      "command": "gcc",
+      "command": "C:\\msys64\\ucrt64\\bin\\gcc.exe",
       "args": [
-        "main.c",
-        "-o",
-        "main.exe"
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-I",
+        "firmware/app",
+        "-I",
+        "firmware/app/control",
+        "-I",
+        "firmware/app/drivers",
+        "-I",
+        "firmware/app/safety",
+        "-fsyntax-only",
+        "firmware/app/main_app.c",
+        "firmware/app/control/boat_controller.c",
+        "firmware/app/drivers/boat_ir_decoder.c",
+        "firmware/app/drivers/ir_capture_queue.c",
+        "firmware/app/safety/boat_safety.c"
       ],
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "PATH": "C:\\msys64\\ucrt64\\bin;${env:PATH}"
+        }
+      },
       "group": {
         "kind": "build",
         "isDefault": true
       },
-      "problemMatcher": ["$gcc"]
+      "problemMatcher": [
+        "$gcc"
+      ]
     }
   ]
 }
