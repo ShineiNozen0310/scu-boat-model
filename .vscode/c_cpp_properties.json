@@ -1,0 +1,24 @@
+{
+  "version": 4,
+  "configurations": [
+    {
+      "name": "scu-boat-model",
+      "compilerPath": "C:/msys64/ucrt64/bin/gcc.exe",
+      "includePath": [
+        "${workspaceFolder}/firmware/include",
+        "${workspaceFolder}/firmware/src"
+      ],
+      "browse": {
+        "path": [
+          "${workspaceFolder}/firmware/include",
+          "${workspaceFolder}/firmware/src"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      },
+      "defines": [],
+      "cStandard": "c11",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "windows-gcc-x64"
+    }
+  ]
+}
