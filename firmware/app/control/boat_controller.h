@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "../boat_command.h"
 #include "../drivers/boat_hal.h"
 
 typedef enum BoatGear
@@ -18,12 +19,17 @@ typedef struct BoatController
     uint8_t throttle_target_percent;
     int16_t throttle_output_percent;
     uint8_t rudder_angle_deg;
+    uint8_t turret_yaw_angle_deg;
+    uint8_t turret_pitch_angle_deg;
+    bool water_cannon_enabled;
+    bool navigation_lights_enabled;
     uint8_t last_repeatable_command;
     uint32_t last_command_ms;
     bool has_last_repeatable_command;
 } BoatController;
 
 void BoatController_Init(BoatController *controller);
+bool BoatController_ApplyCommand(BoatController *controller, const BoatCommand *command, uint32_t now_ms);
 bool BoatController_HandleCommand(BoatController *controller, uint8_t ir_command, uint32_t now_ms);
 bool BoatController_HandleRepeat(BoatController *controller, uint32_t now_ms);
 void BoatController_Tick(BoatController *controller, const BoatHal *hal);

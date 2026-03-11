@@ -1,0 +1,8 @@
+CompileFlags:
+  Add:
+    - -std=c11
+    - -Ifirmware/cubemx
+    - -Ifirmware/app
+    - -Ifirmware/app/control
+    - -Ifirmware/app/drivers
+    - -Ifirmware/app/safety

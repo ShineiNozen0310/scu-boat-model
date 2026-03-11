@@ -18,19 +18,34 @@ static uint8_t clamp_percent(int32_t value)
     return (uint8_t)value;
 }
 
-static uint8_t clamp_angle(int32_t value)
+static uint8_t clamp_angle(int32_t value, uint8_t min_angle_deg, uint8_t max_angle_deg)
 {
-    if (value < (int32_t)BOAT_SERVO_MIN_DEG)
+    if (value < (int32_t)min_angle_deg)
     {
-        return BOAT_SERVO_MIN_DEG;
+        return min_angle_deg;
     }
 
-    if (value > (int32_t)BOAT_SERVO_MAX_DEG)
+    if (value > (int32_t)max_angle_deg)
     {
-        return BOAT_SERVO_MAX_DEG;
+        return max_angle_deg;
     }
 
     return (uint8_t)value;
+}
+
+static int8_t clamp_axis_percent(int32_t value)
+{
+    if (value < -100)
+    {
+        return -100;
+    }
+
+    if (value > 100)
+    {
+        return 100;
+    }
+
+    return (int8_t)value;
 }
 
 static int16_t approach_target(int16_t current, int16_t target, int16_t step)
@@ -53,6 +68,42 @@ static int16_t approach_target(int16_t current, int16_t target, int16_t step)
     }
 
     return current;
+}
+
+static void set_signed_throttle_target(BoatController *controller, int16_t signed_percent)
+{
+    if (signed_percent < 0)
+    {
+        controller->gear = BOAT_GEAR_REVERSE;
+        controller->throttle_target_percent = clamp_percent(-signed_percent);
+        return;
+    }
+
+    controller->gear = BOAT_GEAR_FORWARD;
+    controller->throttle_target_percent = clamp_percent(signed_percent);
+}
+
+static uint8_t map_axis_percent_to_angle(
+    int8_t axis_percent,
+    uint8_t min_angle_deg,
+    uint8_t center_angle_deg,
+    uint8_t max_angle_deg)
+{
+    int32_t span;
+    int32_t angle;
+    int32_t clamped_percent = (int32_t)clamp_axis_percent(axis_percent);
+
+    if (clamped_percent >= 0)
+    {
+        span = (int32_t)max_angle_deg - (int32_t)center_angle_deg;
+    }
+    else
+    {
+        span = (int32_t)center_angle_deg - (int32_t)min_angle_deg;
+    }
+
+    angle = (int32_t)center_angle_deg + (clamped_percent * span) / 100;
+    return clamp_angle(angle, min_angle_deg, max_angle_deg);
 }
 
 static bool is_repeatable_command(uint8_t ir_command)
@@ -89,12 +140,16 @@ static bool apply_motion_command(BoatController *controller, uint8_t ir_command)
 
         case BOAT_REMOTE_BTN_LEFT:
             controller->rudder_angle_deg = clamp_angle(
-                (int32_t)controller->rudder_angle_deg + (int32_t)BOAT_SERVO_STEP_DEG);
+                (int32_t)controller->rudder_angle_deg + (int32_t)BOAT_SERVO_STEP_DEG,
+                BOAT_SERVO_MIN_DEG,
+                BOAT_SERVO_MAX_DEG);
             break;
 
         case BOAT_REMOTE_BTN_RIGHT:
             controller->rudder_angle_deg = clamp_angle(
-                (int32_t)controller->rudder_angle_deg - (int32_t)BOAT_SERVO_STEP_DEG);
+                (int32_t)controller->rudder_angle_deg - (int32_t)BOAT_SERVO_STEP_DEG,
+                BOAT_SERVO_MIN_DEG,
+                BOAT_SERVO_MAX_DEG);
             break;
 
         default:
@@ -103,6 +158,23 @@ static bool apply_motion_command(BoatController *controller, uint8_t ir_command)
 
     return previous_throttle != controller->throttle_target_percent ||
            previous_angle != controller->rudder_angle_deg;
+}
+
+static bool controller_state_changed(
+    int16_t previous_signed_target,
+    uint8_t previous_rudder,
+    uint8_t previous_turret_yaw,
+    uint8_t previous_turret_pitch,
+    bool previous_water_cannon,
+    bool previous_navigation_lights,
+    const BoatController *controller)
+{
+    return previous_signed_target != BoatController_TargetSignedPercent(controller) ||
+           previous_rudder != controller->rudder_angle_deg ||
+           previous_turret_yaw != controller->turret_yaw_angle_deg ||
+           previous_turret_pitch != controller->turret_pitch_angle_deg ||
+           previous_water_cannon != controller->water_cannon_enabled ||
+           previous_navigation_lights != controller->navigation_lights_enabled;
 }
 
 int16_t BoatController_TargetSignedPercent(const BoatController *controller)
@@ -128,20 +200,79 @@ void BoatController_Init(BoatController *controller)
     controller->throttle_target_percent = 0U;
     controller->throttle_output_percent = 0;
     controller->rudder_angle_deg = BOAT_SERVO_CENTER_DEG;
+    controller->turret_yaw_angle_deg = BOAT_TURRET_YAW_CENTER_DEG;
+    controller->turret_pitch_angle_deg = BOAT_TURRET_PITCH_CENTER_DEG;
+    controller->water_cannon_enabled = false;
+    controller->navigation_lights_enabled = false;
     controller->last_repeatable_command = 0U;
     controller->last_command_ms = 0U;
     controller->has_last_repeatable_command = false;
+}
+
+bool BoatController_ApplyCommand(BoatController *controller, const BoatCommand *command, uint32_t now_ms)
+{
+    int16_t previous_signed_target;
+    uint8_t previous_rudder;
+    uint8_t previous_turret_yaw;
+    uint8_t previous_turret_pitch;
+    bool previous_water_cannon;
+    bool previous_navigation_lights;
+
+    if (controller == 0 || command == 0)
+    {
+        return false;
+    }
+
+    previous_signed_target = BoatController_TargetSignedPercent(controller);
+    previous_rudder = controller->rudder_angle_deg;
+    previous_turret_yaw = controller->turret_yaw_angle_deg;
+    previous_turret_pitch = controller->turret_pitch_angle_deg;
+    previous_water_cannon = controller->water_cannon_enabled;
+    previous_navigation_lights = controller->navigation_lights_enabled;
+
+    set_signed_throttle_target(controller, (int16_t)clamp_axis_percent(command->throttle_percent));
+    controller->rudder_angle_deg = map_axis_percent_to_angle(
+        command->rudder_percent,
+        BOAT_SERVO_MIN_DEG,
+        BOAT_SERVO_CENTER_DEG,
+        BOAT_SERVO_MAX_DEG);
+    controller->turret_yaw_angle_deg = map_axis_percent_to_angle(
+        command->turret_yaw_percent,
+        BOAT_TURRET_YAW_MIN_DEG,
+        BOAT_TURRET_YAW_CENTER_DEG,
+        BOAT_TURRET_YAW_MAX_DEG);
+    controller->turret_pitch_angle_deg = map_axis_percent_to_angle(
+        command->turret_pitch_percent,
+        BOAT_TURRET_PITCH_MIN_DEG,
+        BOAT_TURRET_PITCH_CENTER_DEG,
+        BOAT_TURRET_PITCH_MAX_DEG);
+    controller->water_cannon_enabled = BoatCommand_WaterCannonEnabled(command);
+    controller->navigation_lights_enabled = BoatCommand_LightsEnabled(command);
+    controller->has_last_repeatable_command = false;
+    controller->last_command_ms = now_ms;
+
+    return controller_state_changed(
+        previous_signed_target,
+        previous_rudder,
+        previous_turret_yaw,
+        previous_turret_pitch,
+        previous_water_cannon,
+        previous_navigation_lights,
+        controller);
 }
 
 void BoatController_ForceStop(BoatController *controller, bool center_rudder)
 {
     controller->throttle_target_percent = 0U;
     controller->throttle_output_percent = 0;
+    controller->water_cannon_enabled = false;
     controller->has_last_repeatable_command = false;
 
     if (center_rudder)
     {
         controller->rudder_angle_deg = BOAT_SERVO_CENTER_DEG;
+        controller->turret_yaw_angle_deg = BOAT_TURRET_YAW_CENTER_DEG;
+        controller->turret_pitch_angle_deg = BOAT_TURRET_PITCH_CENTER_DEG;
     }
 }
 
@@ -155,6 +286,9 @@ bool BoatController_HandleCommand(BoatController *controller, uint8_t ir_command
             changed = controller->gear != BOAT_GEAR_FORWARD ||
                       controller->throttle_target_percent != 0U ||
                       controller->rudder_angle_deg != BOAT_SERVO_CENTER_DEG ||
+                      controller->turret_yaw_angle_deg != BOAT_TURRET_YAW_CENTER_DEG ||
+                      controller->turret_pitch_angle_deg != BOAT_TURRET_PITCH_CENTER_DEG ||
+                      controller->water_cannon_enabled ||
                       controller->throttle_output_percent != 0;
             controller->gear = BOAT_GEAR_FORWARD;
             BoatController_ForceStop(controller, true);
@@ -236,6 +370,14 @@ void BoatController_Tick(BoatController *controller, const BoatHal *hal)
     left_led = controller->rudder_angle_deg > BOAT_SERVO_CENTER_DEG;
     right_led = controller->rudder_angle_deg < BOAT_SERVO_CENTER_DEG;
 
+    if (controller->navigation_lights_enabled)
+    {
+        front_led = true;
+        rear_led = true;
+        left_led = true;
+        right_led = true;
+    }
+
     if (hal != 0 && hal->motor_set_signed_percent != 0)
     {
         hal->motor_set_signed_percent(controller->throttle_output_percent);
@@ -244,6 +386,21 @@ void BoatController_Tick(BoatController *controller, const BoatHal *hal)
     if (hal != 0 && hal->servo_set_angle_deg != 0)
     {
         hal->servo_set_angle_deg(controller->rudder_angle_deg);
+    }
+
+    if (hal != 0 && hal->turret_yaw_set_angle_deg != 0)
+    {
+        hal->turret_yaw_set_angle_deg(controller->turret_yaw_angle_deg);
+    }
+
+    if (hal != 0 && hal->turret_pitch_set_angle_deg != 0)
+    {
+        hal->turret_pitch_set_angle_deg(controller->turret_pitch_angle_deg);
+    }
+
+    if (hal != 0 && hal->water_cannon_set_enabled != 0)
+    {
+        hal->water_cannon_set_enabled(controller->water_cannon_enabled);
     }
 
     if (hal != 0 && hal->led_set != 0)

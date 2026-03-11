@@ -5,6 +5,7 @@
       "name": "scu-boat-model",
       "compilerPath": "C:/msys64/ucrt64/bin/gcc.exe",
       "includePath": [
+        "${workspaceFolder}/firmware/cubemx",
         "${workspaceFolder}/firmware/app",
         "${workspaceFolder}/firmware/app/control",
         "${workspaceFolder}/firmware/app/drivers",
@@ -12,6 +13,7 @@
       ],
       "browse": {
         "path": [
+          "${workspaceFolder}/firmware/cubemx",
           "${workspaceFolder}/firmware/app",
           "${workspaceFolder}/firmware/app/control",
           "${workspaceFolder}/firmware/app/drivers",

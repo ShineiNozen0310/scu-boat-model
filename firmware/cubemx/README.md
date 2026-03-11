@@ -1,11 +1,8 @@
-# CubeMX / Keil 工程放在这里
+# Firmware & CubeMX
 
-建议把自动生成和板级启动代码放在本目录，不要和 `firmware/app/` 的手写业务逻辑混在一起。
+本目录负责硬件初始化与 CubeMX/Keil 工程集成相关指引。
 
-推荐做法：
+## 内容与规范
 
-1. `main.c` 里完成时钟、GPIO、TIM、ADC、OLED 初始化。
-2. 初始化完成后调用 `MainApp_Init(...)`。
-3. 在主循环中调用 `MainApp_RunOnce(...)`。
-4. 在 `TIM2_IRQHandler` 中读取捕获间隔后调用 `MainApp_OnCaptureIntervalUs(...)`。
-5. 低压检测或独立急停输入可以通过 `MainApp_SetEmergencyStop(...)` 或 `battery_is_low` 回调接入。
+- **板级外设配置**：提供面向 STM32F103、CRSF 接收机（USART1）、双向电调和多路舵机（TIM3 PWM）的接入模板。
+- **业务代码集成**：演示如何将手写业务逻辑（例如 `boat_app_port.*`）无缝接入到生成的外部中断、主循环中。
