@@ -13,3 +13,4 @@
 ## 快速开始
 
 请查阅 `docs/00_overview.md` 获取该项目的总体介绍和构建指南。
+如果准备手搓遥控器, 且希望优先保证抗干扰能力, 先看 `docs/07_diy_remote_anti_interference.md`。

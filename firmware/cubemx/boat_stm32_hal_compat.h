@@ -33,6 +33,10 @@ typedef enum GPIO_PinState
 #define GPIOA ((GPIO_TypeDef *)0)
 #endif
 
+#ifndef GPIOB
+#define GPIOB ((GPIO_TypeDef *)1)
+#endif
+
 #ifndef GPIO_PIN_1
 #define GPIO_PIN_1 ((uint16_t)0x0002U)
 #endif
@@ -57,8 +61,25 @@ typedef enum GPIO_PinState
 #define GPIO_PIN_8 ((uint16_t)0x0100U)
 #endif
 
+#ifndef GPIO_PIN_12
+#define GPIO_PIN_12 ((uint16_t)0x1000U)
+#endif
+
+#ifndef GPIO_PIN_13
+#define GPIO_PIN_13 ((uint16_t)0x2000U)
+#endif
+
+#ifndef GPIO_PIN_14
+#define GPIO_PIN_14 ((uint16_t)0x4000U)
+#endif
+
+#ifndef GPIO_PIN_15
+#define GPIO_PIN_15 ((uint16_t)0x8000U)
+#endif
+
 void MX_GPIO_Init(void);
 void HAL_GPIO_WritePin(GPIO_TypeDef *gpio_port, uint16_t gpio_pin, GPIO_PinState pin_state);
+GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *gpio_port, uint16_t gpio_pin);
 #endif
 
 #if BOAT_HAL_HAS_INCLUDE("tim.h")

@@ -12,11 +12,45 @@
 
 MainApp g_boat_app;
 
-static uint8_t g_crsf_rx_byte;
+static uint8_t g_uart_rx_byte;
 
-static void boat_crsf_start_receive_it(void)
+static void boat_uart_start_receive_it(void)
 {
-    (void)HAL_UART_Receive_IT(&huart1, &g_crsf_rx_byte, 1U);
+    (void)HAL_UART_Receive_IT(&huart1, &g_uart_rx_byte, 1U);
+}
+
+static void boat_delay_ms(uint32_t delay_ms)
+{
+    uint32_t start_ms = HAL_GetTick();
+
+    while ((uint32_t)(HAL_GetTick() - start_ms) < delay_ms)
+    {
+    }
+}
+
+static void boat_radio_prepare_uart_link(void)
+{
+#if BOAT_UART_LINK_MODE == BOAT_UART_LINK_MODE_RADIO_PACKET
+#if BOAT_ENABLE_RADIO_MODE_PINS
+    HAL_GPIO_WritePin(BOAT_RADIO_M0_GPIO_PORT, BOAT_RADIO_M0_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(BOAT_RADIO_M1_GPIO_PORT, BOAT_RADIO_M1_PIN, GPIO_PIN_RESET);
+#endif
+
+#if BOAT_ENABLE_RADIO_AUX_INPUT
+    uint32_t start_ms = HAL_GetTick();
+
+    while ((uint32_t)(HAL_GetTick() - start_ms) < BOAT_RADIO_AUX_WAIT_TIMEOUT_MS)
+    {
+        if (HAL_GPIO_ReadPin(BOAT_RADIO_AUX_GPIO_PORT, BOAT_RADIO_AUX_PIN) ==
+            BOAT_RADIO_AUX_READY_STATE)
+        {
+            return;
+        }
+    }
+#else
+    boat_delay_ms(BOAT_RADIO_BOOT_WAIT_MS);
+#endif
+#endif
 }
 
 static uint16_t clamp_u16(uint32_t value, uint16_t min_value, uint16_t max_value)
@@ -197,7 +231,8 @@ static const MainAppPlatform g_boat_platform = {
 void BoatApp_Port_Init(void)
 {
     MainApp_Init(&g_boat_app, &g_boat_platform);
-    boat_crsf_start_receive_it();
+    boat_radio_prepare_uart_link();
+    boat_uart_start_receive_it();
 }
 
 void BoatApp_Port_RunOnce(void)
@@ -220,12 +255,26 @@ void BoatApp_Port_OnCrsfRxBuffer(const uint8_t *buffer, uint16_t length)
     (void)MainApp_OnCrsfBytes(&g_boat_app, buffer, length);
 }
 
+void BoatApp_Port_OnRadioRxByte(uint8_t byte)
+{
+    (void)MainApp_OnRadioByte(&g_boat_app, byte);
+}
+
+void BoatApp_Port_OnRadioRxBuffer(const uint8_t *buffer, uint16_t length)
+{
+    (void)MainApp_OnRadioBytes(&g_boat_app, buffer, length);
+}
+
 void BoatApp_Port_HalUartRxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart == &huart1)
     {
-        BoatApp_Port_OnCrsfRxByte(g_crsf_rx_byte);
-        boat_crsf_start_receive_it();
+#if BOAT_UART_LINK_MODE == BOAT_UART_LINK_MODE_CRSF
+        BoatApp_Port_OnCrsfRxByte(g_uart_rx_byte);
+#else
+        BoatApp_Port_OnRadioRxByte(g_uart_rx_byte);
+#endif
+        boat_uart_start_receive_it();
     }
 }
 
@@ -233,6 +282,6 @@ void BoatApp_Port_HalUartErrorCallback(UART_HandleTypeDef *huart)
 {
     if (huart == &huart1)
     {
-        boat_crsf_start_receive_it();
+        boat_uart_start_receive_it();
     }
 }

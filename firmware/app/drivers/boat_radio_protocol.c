@@ -1,5 +1,42 @@
 #include "boat_radio_protocol.h"
 
+static void boat_radio_parser_reset(BoatRadioParser *parser)
+{
+    if (parser != 0)
+    {
+        parser->index = 0U;
+    }
+}
+
+static void boat_radio_parser_seek_next_sync(BoatRadioParser *parser)
+{
+    uint8_t next_sync_index;
+
+    if (parser == 0)
+    {
+        return;
+    }
+
+    for (next_sync_index = 1U; next_sync_index < parser->index; ++next_sync_index)
+    {
+        if (parser->buffer[next_sync_index] == BOAT_RADIO_FRAME_SYNC)
+        {
+            uint8_t remaining = (uint8_t)(parser->index - next_sync_index);
+            uint8_t copy_index;
+
+            for (copy_index = 0U; copy_index < remaining; ++copy_index)
+            {
+                parser->buffer[copy_index] = parser->buffer[next_sync_index + copy_index];
+            }
+
+            parser->index = remaining;
+            return;
+        }
+    }
+
+    boat_radio_parser_reset(parser);
+}
+
 void BoatRadioFrame_InitNeutral(BoatRadioFrame *frame)
 {
     if (frame != 0)
@@ -92,4 +129,54 @@ BoatRadioDecodeStatus BoatRadioProtocol_Decode(
     out_frame->command.turret_pitch_percent = (int8_t)payload[5];
     out_frame->command.flags = payload[6];
     return BOAT_RADIO_DECODE_OK;
+}
+
+void BoatRadioParser_Init(BoatRadioParser *parser)
+{
+    boat_radio_parser_reset(parser);
+}
+
+BoatRadioParseResult BoatRadioParser_PushByte(
+    BoatRadioParser *parser,
+    uint8_t byte,
+    BoatRadioFrame *out_frame)
+{
+    if (parser == 0)
+    {
+        return BOAT_RADIO_PARSE_ERROR;
+    }
+
+    if (parser->index == 0U)
+    {
+        if (byte != BOAT_RADIO_FRAME_SYNC)
+        {
+            return BOAT_RADIO_PARSE_NONE;
+        }
+
+        parser->buffer[parser->index++] = byte;
+        return BOAT_RADIO_PARSE_NONE;
+    }
+
+    if (parser->index >= BOAT_RADIO_FRAME_LENGTH)
+    {
+        boat_radio_parser_reset(parser);
+        return BOAT_RADIO_PARSE_ERROR;
+    }
+
+    parser->buffer[parser->index++] = byte;
+
+    if (parser->index < BOAT_RADIO_FRAME_LENGTH)
+    {
+        return BOAT_RADIO_PARSE_NONE;
+    }
+
+    if (BoatRadioProtocol_Decode(parser->buffer, BOAT_RADIO_FRAME_LENGTH, out_frame) ==
+        BOAT_RADIO_DECODE_OK)
+    {
+        boat_radio_parser_reset(parser);
+        return BOAT_RADIO_PARSE_FRAME;
+    }
+
+    boat_radio_parser_seek_next_sync(parser);
+    return BOAT_RADIO_PARSE_ERROR;
 }

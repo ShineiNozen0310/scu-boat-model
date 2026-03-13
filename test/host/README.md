@@ -4,4 +4,4 @@
 
 ## 核心模块
 
-- `crsf_host_selftest.c`: 测试 CRSF 通道解包、流式喂包通道映射，以及急停和安全断连保护机制。
+- `crsf_host_selftest.c`: 测试 CRSF 通道解包、流式喂包通道映射、预算无线链路 `radio packet` 序号处理，以及急停和安全断连保护机制。

@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdint.h>
 
 #include "../../firmware/app/boat_config.h"
@@ -7,7 +8,8 @@
 enum
 {
     TEST_CRSF_PACKET_LENGTH = 26U,
-    TEST_CRSF_FRAME_LENGTH = 24U
+    TEST_CRSF_FRAME_LENGTH = 24U,
+    TEST_RADIO_PACKET_LENGTH = BOAT_RADIO_FRAME_LENGTH
 };
 
 typedef struct TestHalState
@@ -26,6 +28,8 @@ typedef struct TestHalState
 static TestHalState g_hal_state;
 static uint32_t g_now_ms;
 static bool g_battery_low;
+static const char *g_failed_condition;
+static uint32_t g_failed_line;
 
 static void *test_memset(void *destination, uint8_t value, uint32_t length)
 {
@@ -124,9 +128,17 @@ static const MainAppPlatform g_test_platform = {
     {                                                                                          \
         if (!(condition))                                                                      \
         {                                                                                      \
+            g_failed_condition = #condition;                                                   \
+            g_failed_line = (uint32_t)__LINE__;                                                \
             return false;                                                                      \
         }                                                                                      \
     } while (0)
+
+static int report_failed_test(const char *test_name)
+{
+    (void)fprintf(stderr, "FAILED: %s (line %lu): %s\n", test_name, (unsigned long)g_failed_line, g_failed_condition);
+    return 1;
+}
 
 static uint16_t test_us_to_ticks(int16_t pulse_us)
 {
@@ -301,21 +313,173 @@ static bool test_emergency_stop_and_link_loss(void)
     return true;
 }
 
+static bool build_radio_packet(
+    uint8_t sequence,
+    int8_t throttle_percent,
+    int8_t rudder_percent,
+    int8_t turret_yaw_percent,
+    int8_t turret_pitch_percent,
+    uint8_t flags,
+    uint8_t *packet)
+{
+    BoatRadioFrame frame;
+
+    BoatRadioFrame_InitNeutral(&frame);
+    frame.sequence = sequence;
+    frame.command.throttle_percent = throttle_percent;
+    frame.command.rudder_percent = rudder_percent;
+    frame.command.turret_yaw_percent = turret_yaw_percent;
+    frame.command.turret_pitch_percent = turret_pitch_percent;
+    frame.command.flags = flags;
+
+    CHECK(packet != 0);
+    CHECK(BoatRadioProtocol_Encode(&frame, packet, TEST_RADIO_PACKET_LENGTH));
+    return true;
+}
+
+static bool test_radio_packets_ignore_duplicates_and_stale_frames(void)
+{
+    MainApp app;
+    uint8_t packet[TEST_RADIO_PACKET_LENGTH];
+    const BoatController *controller;
+
+    reset_hal_state();
+    g_now_ms = 0U;
+    g_battery_low = false;
+    MainApp_Init(&app, &g_test_platform);
+
+    CHECK(build_radio_packet(
+        10U,
+        60,
+        25,
+        -40,
+        50,
+        BOAT_COMMAND_FLAG_WATER_CANNON_ENABLED,
+        packet));
+    CHECK(MainApp_OnRadioPacket(&app, packet, sizeof(packet)));
+
+    controller = MainApp_Controller(&app);
+    CHECK(controller != 0);
+    CHECK(BoatController_TargetSignedPercent(controller) == 60);
+    CHECK(controller->water_cannon_enabled);
+
+    CHECK(build_radio_packet(10U, -80, -100, 0, 0, 0U, packet));
+    CHECK(!MainApp_OnRadioPacket(&app, packet, sizeof(packet)));
+    CHECK(BoatController_TargetSignedPercent(controller) == 60);
+    CHECK(controller->water_cannon_enabled);
+
+    CHECK(build_radio_packet(9U, -80, -100, 0, 0, 0U, packet));
+    CHECK(!MainApp_OnRadioPacket(&app, packet, sizeof(packet)));
+    CHECK(BoatController_TargetSignedPercent(controller) == 60);
+    CHECK(controller->water_cannon_enabled);
+
+    g_now_ms = 20U;
+    CHECK(build_radio_packet(11U, -40, -30, 80, -20, BOAT_COMMAND_FLAG_LIGHTS_ENABLED, packet));
+    CHECK(MainApp_OnRadioPacket(&app, packet, sizeof(packet)));
+    CHECK(BoatController_TargetSignedPercent(controller) == -40);
+    CHECK(!controller->water_cannon_enabled);
+    CHECK(controller->navigation_lights_enabled);
+
+    return true;
+}
+
+static bool test_radio_sequence_resets_after_link_loss(void)
+{
+    MainApp app;
+    uint8_t packet[TEST_RADIO_PACKET_LENGTH];
+    const BoatController *controller;
+
+    reset_hal_state();
+    g_now_ms = 0U;
+    g_battery_low = false;
+    MainApp_Init(&app, &g_test_platform);
+
+    CHECK(build_radio_packet(100U, 50, 0, 0, 0, 0U, packet));
+    CHECK(MainApp_OnRadioPacket(&app, packet, sizeof(packet)));
+    CHECK(BoatController_TargetSignedPercent(MainApp_Controller(&app)) == 50);
+
+    g_now_ms = BOAT_COMMAND_TIMEOUT_MS + 10U;
+    MainApp_RunOnce(&app);
+    CHECK(BoatSafety_ActiveReason(MainApp_Safety(&app)) == BOAT_SAFETY_REASON_LINK_LOSS);
+    CHECK(BoatController_TargetSignedPercent(MainApp_Controller(&app)) == 0);
+
+    CHECK(build_radio_packet(1U, 30, 40, 0, 0, BOAT_COMMAND_FLAG_WATER_CANNON_ENABLED, packet));
+    CHECK(MainApp_OnRadioPacket(&app, packet, sizeof(packet)));
+
+    controller = MainApp_Controller(&app);
+    CHECK(controller != 0);
+    CHECK(BoatController_TargetSignedPercent(controller) == 30);
+    CHECK(controller->water_cannon_enabled);
+
+    MainApp_RunOnce(&app);
+    CHECK(BoatSafety_ActiveReason(MainApp_Safety(&app)) == BOAT_SAFETY_REASON_NONE);
+
+    return true;
+}
+
+static bool test_streaming_radio_bytes_resync_after_truncated_frame(void)
+{
+    MainApp app;
+    uint8_t first_packet[TEST_RADIO_PACKET_LENGTH];
+    uint8_t second_packet[TEST_RADIO_PACKET_LENGTH];
+    uint8_t stream[(TEST_RADIO_PACKET_LENGTH * 2U) + 2U];
+    const BoatController *controller;
+
+    reset_hal_state();
+    g_now_ms = 0U;
+    g_battery_low = false;
+    MainApp_Init(&app, &g_test_platform);
+
+    CHECK(build_radio_packet(40U, 70, -20, 30, 10, BOAT_COMMAND_FLAG_WATER_CANNON_ENABLED, first_packet));
+    CHECK(build_radio_packet(41U, -35, 45, -60, 25, BOAT_COMMAND_FLAG_LIGHTS_ENABLED, second_packet));
+
+    stream[0] = 0x00U;
+    stream[1] = 0x99U;
+    (void)test_memcpy(&stream[2], first_packet, TEST_RADIO_PACKET_LENGTH - 1U);
+    (void)test_memcpy(&stream[2 + TEST_RADIO_PACKET_LENGTH - 1U], second_packet, TEST_RADIO_PACKET_LENGTH);
+
+    CHECK(MainApp_OnRadioBytes(&app, stream, sizeof(stream)));
+
+    controller = MainApp_Controller(&app);
+    CHECK(controller != 0);
+    CHECK(BoatController_TargetSignedPercent(controller) == -35);
+    CHECK(controller->rudder_angle_deg > BOAT_SERVO_CENTER_DEG);
+    CHECK(!controller->water_cannon_enabled);
+    CHECK(controller->navigation_lights_enabled);
+
+    return true;
+}
+
 int main(void)
 {
     if (!test_decode_frame_unpacks_all_16_channels())
     {
-        return 1;
+        return report_failed_test("test_decode_frame_unpacks_all_16_channels");
     }
 
     if (!test_streaming_bytes_updates_controller_state())
     {
-        return 1;
+        return report_failed_test("test_streaming_bytes_updates_controller_state");
     }
 
     if (!test_emergency_stop_and_link_loss())
     {
-        return 1;
+        return report_failed_test("test_emergency_stop_and_link_loss");
+    }
+
+    if (!test_radio_packets_ignore_duplicates_and_stale_frames())
+    {
+        return report_failed_test("test_radio_packets_ignore_duplicates_and_stale_frames");
+    }
+
+    if (!test_radio_sequence_resets_after_link_loss())
+    {
+        return report_failed_test("test_radio_sequence_resets_after_link_loss");
+    }
+
+    if (!test_streaming_radio_bytes_resync_after_truncated_frame())
+    {
+        return report_failed_test("test_streaming_radio_bytes_resync_after_truncated_frame");
     }
     return 0;
 }

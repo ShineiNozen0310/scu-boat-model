@@ -12,6 +12,55 @@ static uint32_t main_app_now_ms(const MainApp *app)
     return 0U;
 }
 
+static bool main_app_radio_link_is_stale(const MainApp *app, uint32_t now_ms)
+{
+#if BOAT_COMMAND_TIMEOUT_MS > 0U
+    if (app == 0 || !app->safety.has_rx)
+    {
+        return true;
+    }
+
+    return (uint32_t)(now_ms - app->safety.last_rx_ms) > BOAT_COMMAND_TIMEOUT_MS;
+#else
+    (void)app;
+    (void)now_ms;
+    return false;
+#endif
+}
+
+static bool main_app_radio_sequence_is_newer(uint8_t previous_sequence, uint8_t next_sequence)
+{
+    uint8_t delta = (uint8_t)(next_sequence - previous_sequence);
+    return delta != 0U && delta < 128U;
+}
+
+static bool main_app_apply_radio_frame(MainApp *app, const BoatRadioFrame *frame)
+{
+    uint32_t now_ms;
+
+    if (app == 0 || frame == 0)
+    {
+        return false;
+    }
+
+    now_ms = main_app_now_ms(app);
+    if (main_app_radio_link_is_stale(app, now_ms))
+    {
+        app->has_radio_sequence = false;
+    }
+
+    if (app->has_radio_sequence &&
+        !main_app_radio_sequence_is_newer(app->last_radio_sequence, frame->sequence))
+    {
+        return false;
+    }
+
+    app->last_radio_sequence = frame->sequence;
+    app->has_radio_sequence = true;
+    (void)MainApp_ApplyCommand(app, &frame->command);
+    return true;
+}
+
 static bool main_app_battery_is_low(const MainApp *app)
 {
     if (app->platform != 0 && app->platform->battery_is_low != 0)
@@ -159,7 +208,8 @@ static bool main_app_apply_crsf_channels(MainApp *app, const BoatCrsfChannels *c
         BoatCommand_InitNeutral(&command);
     }
 
-    return MainApp_ApplyCommand(app, &command);
+    (void)MainApp_ApplyCommand(app, &command);
+    return true;
 }
 
 bool MainApp_ApplyCommand(MainApp *app, const BoatCommand *command)
@@ -247,7 +297,47 @@ bool MainApp_OnRadioPacket(MainApp *app, const uint8_t *payload, uint8_t length)
         return false;
     }
 
-    return MainApp_ApplyCommand(app, &frame.command);
+    return main_app_apply_radio_frame(app, &frame);
+}
+
+bool MainApp_OnRadioByte(MainApp *app, uint8_t byte)
+{
+    BoatRadioFrame frame;
+    BoatRadioParseResult result;
+
+    if (app == 0)
+    {
+        return false;
+    }
+
+    result = BoatRadioParser_PushByte(&app->radio_parser, byte, &frame);
+    if (result != BOAT_RADIO_PARSE_FRAME)
+    {
+        return false;
+    }
+
+    return main_app_apply_radio_frame(app, &frame);
+}
+
+bool MainApp_OnRadioBytes(MainApp *app, const uint8_t *payload, uint16_t length)
+{
+    uint16_t index;
+    bool applied = false;
+
+    if (app == 0 || (payload == 0 && length > 0U))
+    {
+        return false;
+    }
+
+    for (index = 0U; index < length; ++index)
+    {
+        if (MainApp_OnRadioByte(app, payload[index]))
+        {
+            applied = true;
+        }
+    }
+
+    return applied;
 }
 
 static void process_ir_input(MainApp *app, uint32_t now_ms)
@@ -288,9 +378,12 @@ void MainApp_Init(MainApp *app, const MainAppPlatform *platform)
 
     BoatController_Init(&app->controller);
     BoatCrsfParser_Init(&app->crsf_parser);
+    BoatRadioParser_Init(&app->radio_parser);
     BoatIrDecoder_Init(&app->ir_decoder);
     BoatIrCaptureQueue_Init(&app->capture_queue);
     BoatSafety_Init(&app->safety);
+    app->last_radio_sequence = 0U;
+    app->has_radio_sequence = false;
 
     if (app->platform != 0 && app->platform->board_init != 0)
     {
