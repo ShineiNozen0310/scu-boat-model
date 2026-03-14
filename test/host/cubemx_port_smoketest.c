@@ -8,7 +8,11 @@
 #include "../../firmware/cubemx/usart.h"
 #include "../../firmware/cubemx/boat_app_port.h"
 #include "../../firmware/cubemx/boat_board_config.h"
+#include "../../firmware/app/boat_config.h"
+#include "../../firmware/app/drivers/boat_crsf.h"
+#if BOAT_UART_LINK_MODE == BOAT_UART_LINK_MODE_RADIO_PACKET
 #include "../../firmware/app/drivers/boat_radio_protocol.h"
+#endif
 
 TIM_HandleTypeDef htim3 = { {71U} };
 UART_HandleTypeDef huart1 = { 0U };
@@ -113,6 +117,7 @@ void HAL_RCC_GetClockConfig(RCC_ClkInitTypeDef *clock_config, uint32_t *flash_la
     }
 }
 
+#if BOAT_UART_LINK_MODE == BOAT_UART_LINK_MODE_RADIO_PACKET
 static bool build_radio_packet(
     uint8_t sequence,
     int8_t throttle_percent,
@@ -136,10 +141,71 @@ static bool build_radio_packet(
     CHECK(BoatRadioProtocol_Encode(&frame, packet, BOAT_RADIO_FRAME_LENGTH));
     return true;
 }
+#endif
 
-static bool test_boat_app_port_consumes_streamed_radio_bytes(void)
+static uint16_t test_us_to_ticks(int16_t pulse_us)
 {
-    uint8_t packet[BOAT_RADIO_FRAME_LENGTH];
+    return (uint16_t)((((int32_t)pulse_us - 1500) * 8) / 5 + 992);
+}
+
+static void pack_crsf_channels(const uint16_t *channels, uint8_t *payload)
+{
+    uint8_t channel_index;
+    uint8_t payload_index = 0U;
+    uint32_t accumulator = 0U;
+    uint8_t bits_in_accumulator = 0U;
+
+    for (channel_index = 0U; channel_index < BOAT_CRSF_NUM_CHANNELS; ++channel_index)
+    {
+        accumulator |= ((uint32_t)(channels[channel_index] & 0x07FFU) << bits_in_accumulator);
+        bits_in_accumulator = (uint8_t)(bits_in_accumulator + 11U);
+
+        while (bits_in_accumulator >= 8U)
+        {
+            payload[payload_index++] = (uint8_t)(accumulator & 0xFFU);
+            accumulator >>= 8U;
+            bits_in_accumulator = (uint8_t)(bits_in_accumulator - 8U);
+        }
+    }
+
+    if (payload_index < BOAT_CRSF_RC_PAYLOAD_LENGTH)
+    {
+        payload[payload_index] = (uint8_t)(accumulator & 0xFFU);
+    }
+}
+
+static bool build_crsf_packet(uint8_t *packet, uint8_t *length)
+{
+    uint16_t channels[BOAT_CRSF_NUM_CHANNELS];
+    uint8_t index;
+
+    CHECK(packet != 0);
+    CHECK(length != 0);
+
+    for (index = 0U; index < BOAT_CRSF_NUM_CHANNELS; ++index)
+    {
+        channels[index] = test_us_to_ticks(1500);
+    }
+
+    channels[BOAT_CRSF_CHANNEL_RUDDER - 1U] = test_us_to_ticks(1375);
+    channels[BOAT_CRSF_CHANNEL_THROTTLE - 1U] = test_us_to_ticks(1775);
+    channels[BOAT_CRSF_CHANNEL_TURRET_YAW - 1U] = test_us_to_ticks(1675);
+    channels[BOAT_CRSF_CHANNEL_TURRET_PITCH - 1U] = test_us_to_ticks(1450);
+    channels[BOAT_CRSF_CHANNEL_LIGHTS - 1U] = test_us_to_ticks(2000);
+
+    packet[0] = BOAT_CRSF_SYNC_BYTE;
+    packet[1] = 24U;
+    packet[2] = BOAT_CRSF_FRAME_RC_CHANNELS_PACKED;
+    pack_crsf_channels(channels, &packet[3]);
+    packet[25] = BoatCrsf_Crc8(&packet[2], 23U);
+    *length = 26U;
+    return true;
+}
+
+static bool test_boat_app_port_consumes_streamed_uart_bytes(void)
+{
+    uint8_t packet[BOAT_CRSF_MAX_PACKET_LENGTH];
+    uint8_t packet_length = 0U;
     const BoatController *controller;
     uint8_t index;
     uint32_t calls_before_error;
@@ -155,9 +221,14 @@ static bool test_boat_app_port_consumes_streamed_radio_bytes(void)
     CHECK(g_rx_buffer != 0);
     CHECK(g_rx_size == 1U);
 
+#if BOAT_UART_LINK_MODE == BOAT_UART_LINK_MODE_CRSF
+    CHECK(build_crsf_packet(packet, &packet_length));
+#else
+    packet_length = BOAT_RADIO_FRAME_LENGTH;
     CHECK(build_radio_packet(7U, 55, -25, 35, -10, BOAT_COMMAND_FLAG_LIGHTS_ENABLED, packet));
+#endif
 
-    for (index = 0U; index < BOAT_RADIO_FRAME_LENGTH; ++index)
+    for (index = 0U; index < packet_length; ++index)
     {
         *g_rx_buffer = packet[index];
         BoatApp_Port_HalUartRxCpltCallback(&huart1);
@@ -170,7 +241,7 @@ static bool test_boat_app_port_consumes_streamed_radio_bytes(void)
     CHECK(controller->turret_yaw_angle_deg > BOAT_TURRET_YAW_CENTER_DEG);
     CHECK(controller->turret_pitch_angle_deg < BOAT_TURRET_PITCH_CENTER_DEG);
     CHECK(controller->navigation_lights_enabled);
-    CHECK(g_uart_receive_it_calls == (uint32_t)(BOAT_RADIO_FRAME_LENGTH + 1U));
+    CHECK(g_uart_receive_it_calls == (uint32_t)(packet_length + 1U));
 
     calls_before_error = g_uart_receive_it_calls;
     BoatApp_Port_HalUartErrorCallback(&huart1);
@@ -181,9 +252,9 @@ static bool test_boat_app_port_consumes_streamed_radio_bytes(void)
 
 int main(void)
 {
-    if (!test_boat_app_port_consumes_streamed_radio_bytes())
+    if (!test_boat_app_port_consumes_streamed_uart_bytes())
     {
-        return report_failed_test("test_boat_app_port_consumes_streamed_radio_bytes");
+        return report_failed_test("test_boat_app_port_consumes_streamed_uart_bytes");
     }
 
     return 0;

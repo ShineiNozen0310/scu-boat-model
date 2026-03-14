@@ -46,9 +46,9 @@
 默认映射写在 `firmware/app/boat_config.h`:
 
 - `CH1`: 方向舵
-- `CH2`: 油门
-- `CH3`: 炮塔水平
-- `CH4`: 炮塔俯仰
+- `CH2`: 炮塔俯仰
+- `CH3`: 油门
+- `CH4`: 炮塔水平
 - `CH5`: 水炮开关
 - `CH6`: 灯光开关
 - `CH7`: 急停开关
@@ -63,6 +63,13 @@
 - 最小 `1000us`
 - 最大 `2000us`
 - 死区 `20us`
+
+对于 `RadioMaster Pocket / EdgeTX Mode 2`, 建议对应:
+
+- `CH1 <- Ail`
+- `CH2 <- Ele`
+- `CH3 <- Thr`
+- `CH4 <- Rud`
 
 如果你的手台通道顺序不同, 只改 `boat_config.h` 宏定义即可。
 

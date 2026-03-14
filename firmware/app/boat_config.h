@@ -24,11 +24,17 @@
 #define BOAT_REPEAT_WINDOW_MS            220U
 #define BOAT_COMMAND_TIMEOUT_MS          1000U
 
-/* CRSF channel mapping */
+/*
+ * Recommended Pocket / EdgeTX Mode 2 mapping:
+ *   CH1 (Ail) -> rudder / steering
+ *   CH2 (Ele) -> turret pitch
+ *   CH3 (Thr) -> throttle
+ *   CH4 (Rud) -> turret yaw
+ */
 #define BOAT_CRSF_CHANNEL_RUDDER         1U
-#define BOAT_CRSF_CHANNEL_THROTTLE       2U
-#define BOAT_CRSF_CHANNEL_TURRET_YAW     3U
-#define BOAT_CRSF_CHANNEL_TURRET_PITCH   4U
+#define BOAT_CRSF_CHANNEL_TURRET_PITCH   2U
+#define BOAT_CRSF_CHANNEL_THROTTLE       3U
+#define BOAT_CRSF_CHANNEL_TURRET_YAW     4U
 #define BOAT_CRSF_CHANNEL_WATER_CANNON   5U
 #define BOAT_CRSF_CHANNEL_LIGHTS         6U
 #define BOAT_CRSF_CHANNEL_EMERGENCY_STOP 7U

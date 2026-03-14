@@ -19,6 +19,7 @@ static void boat_uart_start_receive_it(void)
     (void)HAL_UART_Receive_IT(&huart1, &g_uart_rx_byte, 1U);
 }
 
+#if BOAT_UART_LINK_MODE == BOAT_UART_LINK_MODE_RADIO_PACKET && !BOAT_ENABLE_RADIO_AUX_INPUT
 static void boat_delay_ms(uint32_t delay_ms)
 {
     uint32_t start_ms = HAL_GetTick();
@@ -27,6 +28,7 @@ static void boat_delay_ms(uint32_t delay_ms)
     {
     }
 }
+#endif
 
 static void boat_radio_prepare_uart_link(void)
 {

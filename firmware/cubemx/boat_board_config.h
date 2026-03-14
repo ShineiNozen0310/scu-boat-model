@@ -37,10 +37,11 @@
 #define BOAT_UART_LINK_MODE_RADIO_PACKET     2U
 
 /*
- * Default to the budget radio-packet link used by the current under-800 BOM.
- * Switch this back to BOAT_UART_LINK_MODE_CRSF if you later move to ELRS/CRSF.
+ * Default to the recommended Pocket/RP1 V2 ELRS -> CRSF link.
+ * Switch this to BOAT_UART_LINK_MODE_RADIO_PACKET only when using the
+ * separate budget UART packet radio path.
  */
-#define BOAT_UART_LINK_MODE                  BOAT_UART_LINK_MODE_RADIO_PACKET
+#define BOAT_UART_LINK_MODE                  BOAT_UART_LINK_MODE_CRSF
 
 /*
  * ExpressLRS receivers commonly use 420000 baud over CRSF.
